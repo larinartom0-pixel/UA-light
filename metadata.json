@@ -1,0 +1,6 @@
+{
+  "name": "Світло",
+  "description": "Графіки відключення світла в Україні за чергами з живим таймером, 24-годинною шкалою та адресами",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
