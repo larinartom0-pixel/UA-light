@@ -26,29 +26,37 @@ jobs:
       - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Setup Keystore for Signing
+      - name: Setup Keystore from Secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY || secrets.KEYSTORE_BASE64 || secrets.KEYSTORE }}
+          KEY_STORE_PASS: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          USER_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "Decoding KEYSTORE_BASE64 secret..."
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
-            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
-          elif [ -n "${{ secrets.SIGNING_KEY }}" ]; then
+          if [ -n "$SIGNING_KEY" ]; then
             echo "Decoding SIGNING_KEY secret..."
-            echo "${{ secrets.SIGNING_KEY }}" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
+            echo "$SIGNING_KEY" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
-          elif [ -n "${{ secrets.KEYSTORE }}" ]; then
-            echo "Decoding KEYSTORE secret..."
-            echo "${{ secrets.KEYSTORE }}" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
-            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
-          elif [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "Decoding RELEASE_KEYSTORE_BASE64 secret..."
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${GITHUB_WORKSPACE}/my-upload-key.jks"
-            echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
+            
+            # Align alias with Gradle's expected 'upload' alias
+            if [ -n "$KEY_STORE_PASS" ]; then
+              # Detect existing alias in keystore
+              DETECTED_ALIAS=$(keytool -list -keystore "${GITHUB_WORKSPACE}/my-upload-key.jks" -storepass "$KEY_STORE_PASS" 2>/dev/null | grep -i "PrivateKeyEntry" | head -n 1 | awk -F',' '{print $1}' | tr -d ' ' || true)
+              TARGET_ALIAS="${USER_ALIAS:-$DETECTED_ALIAS}"
+              
+              if [ -n "$TARGET_ALIAS" ] && [ "$TARGET_ALIAS" != "upload" ]; then
+                echo "Renaming alias '$TARGET_ALIAS' to 'upload' for Gradle signing..."
+                keytool -changealias -alias "$TARGET_ALIAS" -destalias "upload" \
+                  -keystore "${GITHUB_WORKSPACE}/my-upload-key.jks" \
+                  -storepass "$KEY_STORE_PASS" \
+                  -keypass "${KEY_PASS:-$KEY_STORE_PASS}" || true
+              fi
+            fi
           elif [ -f "${GITHUB_WORKSPACE}/my-upload-key.jks" ]; then
             echo "Using existing my-upload-key.jks..."
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
           else
-            echo "No custom release keystore provided. Falling back to debug keystore for verification."
+            echo "Warning: No release keystore secret provided."
             echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/debug.keystore" >> $GITHUB_ENV
           fi
 
@@ -58,8 +66,8 @@ jobs:
       - name: Build Signed Release APK & Bundle
         env:
           KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.STORE_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease bundleRelease --no-daemon --stacktrace
 
