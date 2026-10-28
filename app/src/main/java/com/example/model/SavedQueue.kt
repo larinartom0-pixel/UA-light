@@ -1,20 +1,21 @@
 package com.example.model
 
-data class SavedQueue(
-    val id: String,
-    val name: String,
-    val queueCode: String,
-    val isCustomUrl: Boolean = false,
-    val customUrl: String = ""
+data class QueueItem(
+    val code: String,
+    val isPowerOffNow: Boolean = false
 ) {
-    val displayQueueCode: String
-        get() = queueCode.replace("-", ".")
+    val displayName: String get() = "Черга $code"
+    val slug: String get() = code.replace(".", "-")
+    val url: String get() = "https://energy-ua.info/cherga/$slug"
 
-    val targetUrl: String
-        get() = if (isCustomUrl && customUrl.isNotBlank()) {
-            customUrl
-        } else {
-            val slug = queueCode.replace(".", "-")
-            "https://energy-ua.info/cherga/$slug"
-        }
+    companion object {
+        val ALL_QUEUE_CODES = listOf(
+            "1.1", "1.2",
+            "2.1", "2.2",
+            "3.1", "3.2",
+            "4.1", "4.2",
+            "5.1", "5.2",
+            "6.1", "6.2"
+        )
+    }
 }

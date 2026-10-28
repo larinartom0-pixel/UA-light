@@ -20,15 +20,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -40,14 +35,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,14 +49,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.model.SavedQueue
-import com.example.ui.components.AddQueueDialog
-import com.example.ui.components.BlackoutToolsDialog
+import com.example.model.ScheduleType
 import com.example.ui.components.DayTimelineBar
 import com.example.ui.components.OutageIntervalCard
-import com.example.ui.components.PasteScheduleDialog
 import com.example.ui.components.QueueSelectorRow
-import com.example.ui.components.ScreenFlashlightDialog
 import com.example.ui.components.StatusHeroCard
 import com.example.ui.theme.DarkNavyBg
 import com.example.ui.theme.DarkNavyBorder
@@ -73,10 +60,8 @@ import com.example.ui.theme.DarkNavySurface
 import com.example.ui.theme.DarkNavySurfaceVariant
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ElectricYellow
-import com.example.ui.theme.OutageRed
 import com.example.ui.theme.PowerGreen
 import com.example.viewmodel.MainViewModel
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -89,13 +74,6 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-
-    var showAddQueueDialog by remember { mutableStateOf(false) }
-    var editingQueue by remember { mutableStateOf<SavedQueue?>(null) }
-    var showPasteDialog by remember { mutableStateOf(false) }
-    var showFlashlightDialog by remember { mutableStateOf(false) }
-    var showToolsDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -129,39 +107,15 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    // Screen Lantern
                     IconButton(
-                        onClick = { showFlashlightDialog = true },
-                        modifier = Modifier.testTag("flashlight_topbar_button")
+                        onClick = { viewModel.refresh() },
+                        enabled = !uiState.isLoading,
+                        modifier = Modifier.testTag("topbar_refresh_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.FlashlightOn,
-                            contentDescription = "Екран-ліхтарик",
-                            tint = ElectricYellow
-                        )
-                    }
-
-                    // Paste text from Telegram
-                    IconButton(
-                        onClick = { showPasteDialog = true },
-                        modifier = Modifier.testTag("paste_topbar_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.ContentPaste,
-                            contentDescription = "Вставити текст графіка",
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Оновити графік",
                             tint = Color.White
-                        )
-                    }
-
-                    // Tools & Powerbank Calculator
-                    IconButton(
-                        onClick = { showToolsDialog = true },
-                        modifier = Modifier.testTag("tools_topbar_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.BatteryChargingFull,
-                            contentDescription = "Калькулятор та поради",
-                            tint = PowerGreen
                         )
                     }
                 },
@@ -177,7 +131,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Loading progress bar
+            // Loading indicator
             if (uiState.isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
@@ -186,13 +140,11 @@ fun MainScreen(
                 )
             }
 
-            // Saved Queues / Locations horizontal bar
+            // Top bar showing all 12 queues (with RED indicators for those currently without power)
             QueueSelectorRow(
-                savedQueues = uiState.savedQueues,
-                selectedQueueId = uiState.selectedQueue?.id,
-                onSelectQueue = { viewModel.selectQueue(it) },
-                onAddQueueClick = { showAddQueueDialog = true },
-                onEditQueueClick = { editingQueue = it }
+                allQueues = uiState.allQueues,
+                selectedQueueCode = uiState.selectedQueueCode,
+                onSelectQueue = { viewModel.selectQueue(it) }
             )
 
             // Main scrollable content
@@ -201,11 +153,11 @@ fun MainScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 1. Hero Status Card with live countdown & pulsing ring
+                // 1. Live Hero Status Card (countdown timer, status badge, share button)
                 item {
                     StatusHeroCard(
                         powerStatus = uiState.powerStatus,
-                        selectedQueue = uiState.selectedQueue,
+                        queueCode = uiState.selectedQueueCode,
                         isLoading = uiState.isLoading,
                         onRefresh = { viewModel.refresh() }
                     )
@@ -214,81 +166,115 @@ fun MainScreen(
                 // 2. 24-Hour Timeline Bar
                 item {
                     DayTimelineBar(
-                        intervals = uiState.scheduleData?.intervals ?: emptyList(),
+                        intervals = uiState.activeIntervals,
                         currentMinuteOfDay = uiState.currentDayMinute
                     )
                 }
 
-                // 3. Schedule Header & Details
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "Графік на сьогодні",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-
-                            val intervals = uiState.scheduleData?.intervals ?: emptyList()
-                            val totalOutageMin = intervals.sumOf { it.durationMinutes }
-                            val totalHours = totalOutageMin / 60
-                            val totalMins = totalOutageMin % 60
-                            val formattedTotal = when {
-                                totalMins == 0 -> "$totalHours год"
-                                totalHours == 0 -> "$totalMins хв"
-                                else -> "$totalHours год $totalMins хв"
-                            }
-
-                            Text(
-                                text = if (intervals.isNotEmpty())
-                                    "${intervals.size} відключення (всього без світла: $formattedTotal)"
-                                else "Відключень не заплановано",
-                                fontSize = 13.sp,
-                                color = Color.White.copy(alpha = 0.65f)
-                            )
-                        }
-
-                        // Edit / Reset buttons
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = { editingQueue = uiState.selectedQueue },
-                                modifier = Modifier.size(36.dp)
+                // 3. Schedule Type Switcher (Основний / Запасний графік)
+                val scheduleData = uiState.scheduleData
+                if (scheduleData != null && scheduleData.hasSecondary) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(DarkNavySurface)
+                                .border(1.dp, DarkNavyBorder, RoundedCornerShape(14.dp))
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val isPrimary = uiState.selectedScheduleType == ScheduleType.PRIMARY
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isPrimary) ElectricYellow else Color.Transparent)
+                                    .clickable { viewModel.setScheduleType(ScheduleType.PRIMARY) }
+                                    .padding(vertical = 10.dp)
+                                    .testTag("primary_schedule_tab")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Edit,
-                                    contentDescription = "Редагувати чергу",
-                                    tint = Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "⚡ Основний графік",
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isPrimary) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isPrimary) Color(0xFF1E1E1E) else Color.White
                                 )
                             }
 
-                            IconButton(
-                                onClick = {
-                                    viewModel.resetToDefaultSchedule()
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("Графік скинуто до джерела")
-                                    }
-                                },
-                                modifier = Modifier.size(36.dp)
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (!isPrimary) ElectricYellow else Color.Transparent)
+                                    .clickable { viewModel.setScheduleType(ScheduleType.SECONDARY) }
+                                    .padding(vertical = 10.dp)
+                                    .testTag("secondary_schedule_tab")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.RestartAlt,
-                                    contentDescription = "Скинути до стандартного",
-                                    tint = Color.White.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "🔄 Запасний графік",
+                                    fontSize = 13.sp,
+                                    fontWeight = if (!isPrimary) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (!isPrimary) Color(0xFF1E1E1E) else Color.White
                                 )
                             }
                         }
                     }
                 }
 
-                // 4. Outage interval list
-                val intervals = uiState.scheduleData?.intervals ?: emptyList()
+                // 4. Outage Intervals Header
+                item {
+                    val intervals = uiState.activeIntervals
+                    val totalOutageMin = intervals.sumOf { it.durationMinutes }
+                    val totalHours = totalOutageMin / 60
+                    val totalMins = totalOutageMin % 60
+                    val formattedTotal = when {
+                        totalMins == 0 -> "$totalHours год"
+                        totalHours == 0 -> "$totalMins хв"
+                        else -> "$totalHours год $totalMins хв"
+                    }
+
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (uiState.selectedScheduleType == ScheduleType.SECONDARY)
+                                    "Запасний графік (Черга ${uiState.selectedQueueCode})"
+                                else
+                                    "Основний графік (Черга ${uiState.selectedQueueCode})",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+
+                            if (intervals.isNotEmpty()) {
+                                Text(
+                                    text = "${intervals.size} відключення",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = ElectricYellow
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (intervals.isNotEmpty())
+                                "Всього без світла: $formattedTotal за добу"
+                            else "Відключень не заплановано",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.65f)
+                        )
+                    }
+                }
+
+                // 5. Clean Interval Cards (Separated, no overlapping duplicates)
+                val intervals = uiState.activeIntervals
                 if (intervals.isEmpty()) {
                     item {
                         Card(
@@ -306,20 +292,20 @@ fun MainScreen(
                                     imageVector = Icons.Filled.Lightbulb,
                                     contentDescription = null,
                                     tint = PowerGreen,
-                                    modifier = Modifier.size(48.dp)
+                                    modifier = Modifier.size(44.dp)
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = "Світло є весь день!",
-                                    fontSize = 17.sp,
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
                                     textAlign = TextAlign.Center
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "На сторінці не знайдено годин відключень на сьогодні або обмеження не діють. Можна заряджати павербанки!",
-                                    fontSize = 13.sp,
+                                    text = "На сьогодні для цієї черги відключень не заплановано",
+                                    fontSize = 12.sp,
                                     color = Color.White.copy(alpha = 0.7f),
                                     textAlign = TextAlign.Center
                                 )
@@ -336,11 +322,11 @@ fun MainScreen(
                     }
                 }
 
-                // 5. Source & status footer
+                // 6. Source & Status Info
                 item {
                     val schedule = uiState.scheduleData
                     val lastUpdatedFormatted = schedule?.lastUpdated?.let {
-                        val sdf = SimpleDateFormat("HH:mm:ss, d MMMM", Locale("uk"))
+                        val sdf = SimpleDateFormat("HH:mm, d MMMM", Locale.getDefault())
                         sdf.format(Date(it))
                     } ?: "щойно"
 
@@ -359,26 +345,21 @@ fun MainScreen(
                                     imageVector = Icons.Filled.Info,
                                     contentDescription = null,
                                     tint = ElectricBlue,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Інформація про дані",
+                                    text = "energy-ua.info • Черга ${uiState.selectedQueueCode}",
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = Color.White
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Статус: ${schedule?.note ?: "Готово"}",
+                                text = "Статус: ${schedule?.note ?: "Готово"} (Оновлено: $lastUpdatedFormatted)",
                                 fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.75f)
-                            )
-                            Text(
-                                text = "Останнє оновлення: $lastUpdatedFormatted",
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.5f)
+                                color = Color.White.copy(alpha = 0.7f)
                             )
                         }
                     }
@@ -386,78 +367,5 @@ fun MainScreen(
                 }
             }
         }
-    }
-
-    // Dialogs
-    if (showAddQueueDialog) {
-        AddQueueDialog(
-            initialQueue = null,
-            onDismiss = { showAddQueueDialog = false },
-            onSave = { name, code, url ->
-                viewModel.addQueue(name, code, url)
-                scope.launch {
-                    snackbarHostState.showSnackbar("Додано чергу $code ($name)")
-                }
-            }
-        )
-    }
-
-    editingQueue?.let { queueToEdit ->
-        AddQueueDialog(
-            initialQueue = queueToEdit,
-            onDismiss = { editingQueue = null },
-            onSave = { name, code, url ->
-                viewModel.updateQueue(
-                    queueToEdit.copy(
-                        name = name,
-                        queueCode = code,
-                        isCustomUrl = url.isNotBlank(),
-                        customUrl = url
-                    )
-                )
-                editingQueue = null
-                scope.launch {
-                    snackbarHostState.showSnackbar("Оновлено чергу $code")
-                }
-            },
-            onDelete = { idToDelete ->
-                viewModel.deleteQueue(idToDelete)
-                editingQueue = null
-                scope.launch {
-                    snackbarHostState.showSnackbar("Чергу видалено")
-                }
-            }
-        )
-    }
-
-    if (showPasteDialog) {
-        PasteScheduleDialog(
-            currentQueueName = uiState.selectedQueue?.name ?: "Поточна черга",
-            onDismiss = { showPasteDialog = false },
-            onApply = { rawText ->
-                val success = viewModel.importPastedSchedule(rawText)
-                if (success) {
-                    scope.launch {
-                        snackbarHostState.showSnackbar("Графік успішно імпортовано!")
-                    }
-                } else {
-                    scope.launch {
-                        snackbarHostState.showSnackbar("Не вдалося розпізнати інтервали")
-                    }
-                }
-            }
-        )
-    }
-
-    if (showFlashlightDialog) {
-        ScreenFlashlightDialog(
-            onDismiss = { showFlashlightDialog = false }
-        )
-    }
-
-    if (showToolsDialog) {
-        BlackoutToolsDialog(
-            onDismiss = { showToolsDialog = false }
-        )
     }
 }

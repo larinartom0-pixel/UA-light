@@ -4,68 +4,115 @@ import com.example.model.OutageInterval
 
 object PowerScheduleParser {
 
-    // Regex matching "18:00 - 20:00" or "з 18:00 до 20:00" or "18:00—20:00" or "18:00–20:00"
     private val INTERVAL_REGEX = Regex(
         """(\d{1,2}:\d{2})\s*(?:-|—|–|до)\s*(\d{1,2}:\d{2})""",
         RegexOption.IGNORE_CASE
     )
 
     /**
-     * Parses outage intervals from raw text or HTML body.
+     * Parses raw text or HTML and separates into (PrimarySchedule, SecondarySchedule)
+     * preventing overlapping outages from merging into a single corrupted schedule.
      */
-    fun parseOutagesFromText(rawText: String): List<OutageInterval> {
-        val cleanText = stripHtmlTags(rawText)
-        val matches = INTERVAL_REGEX.findAll(cleanText).toList()
-        if (matches.isEmpty()) {
-            return emptyList()
+    fun parseSchedulesFromText(rawText: String): Pair<List<OutageInterval>, List<OutageInterval>> {
+        // 1. First check if explicit section headers exist (e.g. "запасний", "можливі", "графік 2", "завтра")
+        val lower = rawText.lowercase()
+        val splitIndex = listOf(
+            lower.indexOf("запасн"),
+            lower.indexOf("можлив"),
+            lower.indexOf("графік 2"),
+            lower.indexOf("завтра")
+        ).filter { it > 0 }.minOrNull()
+
+        if (splitIndex != null) {
+            val part1 = rawText.substring(0, splitIndex)
+            val part2 = rawText.substring(splitIndex)
+            val list1 = parseSingleSchedule(part1)
+            val list2 = parseSingleSchedule(part2)
+            if (list1.isNotEmpty() && list2.isNotEmpty()) {
+                return Pair(list1, list2)
+            }
         }
+
+        // 2. Parse all intervals and partition them if any overlap occurs
+        val allIntervals = parseSingleSchedule(rawText)
+        return partitionNonOverlapping(allIntervals)
+    }
+
+    /**
+     * Parses all intervals from a block of text.
+     */
+    fun parseSingleSchedule(text: String): List<OutageInterval> {
+        val cleanText = stripHtmlTags(text)
+        val matches = INTERVAL_REGEX.findAll(cleanText).toList()
+        if (matches.isEmpty()) return emptyList()
 
         val list = mutableListOf<OutageInterval>()
         for (match in matches) {
             val startStr = match.groupValues[1].trim()
             val endStr = match.groupValues[2].trim()
 
-            val startParts = startStr.split(":")
-            val endParts = endStr.split(":")
-            if (startParts.size == 2 && endParts.size == 2) {
-                val sh = startParts[0].toIntOrNull() ?: continue
-                val sm = startParts[1].toIntOrNull() ?: continue
-                val eh = endParts[0].toIntOrNull() ?: continue
-                val em = endParts[1].toIntOrNull() ?: continue
+            val sp = startStr.split(":")
+            val ep = endStr.split(":")
+            if (sp.size == 2 && ep.size == 2) {
+                val sh = sp[0].toIntOrNull() ?: continue
+                val sm = sp[1].toIntOrNull() ?: continue
+                val eh = ep[0].toIntOrNull() ?: continue
+                val em = ep[1].toIntOrNull() ?: continue
 
                 if (sh in 0..23 && sm in 0..59 && eh in 0..24 && em in 0..59) {
-                    val startMin = sh * 60 + sm
-                    var endMin = eh * 60 + em
+                    val sMin = sh * 60 + sm
+                    var eMin = eh * 60 + em
 
-                    // If outage ends at midnight (00:00 or 24:00)
-                    if (endMin == 0 && (eh == 0 || eh == 24)) {
-                        endMin = 24 * 60
+                    if (eMin == 0 && (eh == 0 || eh == 24)) {
+                        eMin = 1440
                     }
 
-                    if (endMin > startMin) {
-                        val interval = OutageInterval(
-                            startMin = startMin,
-                            endMin = endMin,
-                            startStr = formatTime(sh, sm),
-                            endStr = if (endMin == 1440) "24:00" else formatTime(eh, em)
+                    if (eMin > sMin) {
+                        list.add(
+                            OutageInterval(
+                                startMin = sMin,
+                                endMin = eMin,
+                                startStr = formatTime(sh, sm),
+                                endStr = if (eMin == 1440) "24:00" else formatTime(eh, em)
+                            )
                         )
-                        list.add(interval)
                     }
                 }
             }
         }
 
-        // Sort by start minute and remove exact duplicates
-        return list.distinctBy { "${it.startMin}-${it.endMin}" }.sortedBy { it.startMin }
+        return list.distinctBy { "${it.startMin}-${it.endMin}" }
+    }
+
+    /**
+     * Splits intervals into primary and secondary lists if overlaps occur.
+     */
+    fun partitionNonOverlapping(intervals: List<OutageInterval>): Pair<List<OutageInterval>, List<OutageInterval>> {
+        if (intervals.size <= 1) return Pair(intervals, emptyList())
+
+        val sorted = intervals.sortedWith(compareBy({ it.startMin }, { it.endMin }))
+        val primary = mutableListOf<OutageInterval>()
+        val secondary = mutableListOf<OutageInterval>()
+
+        for (interval in sorted) {
+            val overlapsPrimary = primary.any { existing ->
+                interval.startMin < existing.endMin && existing.startMin < interval.endMin
+            }
+
+            if (!overlapsPrimary) {
+                primary.add(interval)
+            } else {
+                secondary.add(interval)
+            }
+        }
+
+        return Pair(primary.sortedBy { it.startMin }, secondary.sortedBy { it.startMin })
     }
 
     private fun formatTime(hour: Int, min: Int): String {
         return String.format("%02d:%02d", hour, min)
     }
 
-    /**
-     * Strips HTML tags and entities to replicate BeautifulSoup's get_text()
-     */
     fun stripHtmlTags(html: String): String {
         return html
             .replace(Regex("<script[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), " ")
@@ -78,78 +125,93 @@ object PowerScheduleParser {
     }
 
     /**
-     * Default realistic fallback schedules for standard Ukrainian queues
-     * (e.g. 1.1 through 6.2) when offline or blocked by Cloudflare anti-bot.
+     * Default realistic fallback schedules for all 12 Ukrainian queues (1.1 - 6.2).
      */
-    fun getPresetScheduleForQueue(queueCode: String): List<OutageInterval> {
+    fun getPresetScheduleForQueue(queueCode: String): Pair<List<OutageInterval>, List<OutageInterval>> {
         val normalized = queueCode.replace("-", ".").trim()
-        return when (normalized) {
-            "4.2", "4-2" -> listOf(
-                createInterval("02:00", "06:00"),
-                createInterval("10:00", "14:00"),
-                createInterval("18:00", "22:00")
+        val primary = when (normalized) {
+            "4.2" -> listOf(
+                createInterval("06:30", "08:00"),
+                createInterval("12:30", "15:00"),
+                createInterval("18:30", "21:30")
             )
-            "4.1", "4-1" -> listOf(
-                createInterval("00:00", "04:00"),
-                createInterval("08:00", "12:00"),
-                createInterval("16:00", "20:00")
+            "4.1" -> listOf(
+                createInterval("05:30", "07:30"),
+                createInterval("11:30", "14:00"),
+                createInterval("17:30", "20:30")
             )
-            "1.1", "1-1" -> listOf(
+            "1.1" -> listOf(
                 createInterval("00:00", "03:00"),
-                createInterval("07:00", "11:00"),
-                createInterval("15:00", "19:00"),
-                createInterval("23:00", "24:00")
+                createInterval("07:00", "10:30"),
+                createInterval("15:00", "18:30"),
+                createInterval("22:30", "24:00")
             )
-            "1.2", "1-2" -> listOf(
-                createInterval("01:00", "05:00"),
-                createInterval("09:00", "13:00"),
-                createInterval("17:00", "21:00")
+            "1.2" -> listOf(
+                createInterval("01:00", "04:30"),
+                createInterval("08:30", "12:00"),
+                createInterval("16:00", "19:30")
             )
-            "2.1", "2-1" -> listOf(
-                createInterval("03:00", "07:00"),
-                createInterval("11:00", "15:00"),
-                createInterval("19:00", "23:00")
+            "2.1" -> listOf(
+                createInterval("02:30", "06:00"),
+                createInterval("10:00", "13:30"),
+                createInterval("17:30", "21:00")
             )
-            "2.2", "2-2" -> listOf(
-                createInterval("04:00", "08:00"),
-                createInterval("12:00", "16:00"),
-                createInterval("20:00", "24:00")
+            "2.2" -> listOf(
+                createInterval("03:30", "07:00"),
+                createInterval("11:00", "14:30"),
+                createInterval("18:30", "22:00")
             )
-            "3.1", "3-1" -> listOf(
-                createInterval("05:00", "09:00"),
-                createInterval("13:00", "17:00"),
-                createInterval("21:00", "24:00")
+            "3.1" -> listOf(
+                createInterval("04:30", "08:00"),
+                createInterval("12:00", "15:30"),
+                createInterval("19:30", "23:00")
             )
-            "3.2", "3-2" -> listOf(
-                createInterval("06:00", "10:00"),
-                createInterval("14:00", "18:00"),
-                createInterval("22:00", "24:00")
+            "3.2" -> listOf(
+                createInterval("05:00", "08:30"),
+                createInterval("12:30", "16:00"),
+                createInterval("20:00", "23:30")
             )
-            "5.1", "5-1" -> listOf(
-                createInterval("01:00", "04:00"),
-                createInterval("09:00", "13:00"),
-                createInterval("17:00", "21:00")
+            "5.1" -> listOf(
+                createInterval("01:30", "05:00"),
+                createInterval("09:00", "12:30"),
+                createInterval("16:30", "20:00")
             )
-            "5.2", "5-2" -> listOf(
-                createInterval("02:00", "06:00"),
-                createInterval("10:00", "14:00"),
-                createInterval("18:00", "22:00")
+            "5.2" -> listOf(
+                createInterval("02:00", "05:30"),
+                createInterval("09:30", "13:00"),
+                createInterval("17:00", "20:30")
             )
-            "6.1", "6-1" -> listOf(
-                createInterval("03:00", "07:00"),
-                createInterval("11:00", "15:00"),
-                createInterval("19:00", "23:00")
+            "6.1" -> listOf(
+                createInterval("03:00", "06:30"),
+                createInterval("10:30", "14:00"),
+                createInterval("18:00", "21:30")
             )
-            "6.2", "6-2" -> listOf(
-                createInterval("04:00", "08:00"),
-                createInterval("12:00", "16:00"),
-                createInterval("20:00", "24:00")
+            "6.2" -> listOf(
+                createInterval("04:00", "07:30"),
+                createInterval("11:30", "15:00"),
+                createInterval("19:00", "22:30")
             )
             else -> listOf(
                 createInterval("08:00", "12:00"),
                 createInterval("16:00", "20:00")
             )
         }
+
+        val secondary = when (normalized) {
+            "4.2" -> listOf(
+                createInterval("07:30", "09:30"),
+                createInterval("13:30", "16:00"),
+                createInterval("19:30", "21:00")
+            )
+            "4.1" -> listOf(
+                createInterval("06:30", "08:30"),
+                createInterval("12:30", "15:00"),
+                createInterval("18:30", "20:00")
+            )
+            else -> emptyList()
+        }
+
+        return Pair(primary, secondary)
     }
 
     fun createInterval(startStr: String, endStr: String): OutageInterval {

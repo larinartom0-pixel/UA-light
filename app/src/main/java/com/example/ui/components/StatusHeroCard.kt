@@ -52,7 +52,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PowerStatus
-import com.example.model.SavedQueue
 import com.example.ui.theme.DarkNavySurfaceVariant
 import com.example.ui.theme.ElectricYellow
 import com.example.ui.theme.OutageRed
@@ -65,7 +64,7 @@ import com.example.ui.theme.PowerGreenGlow
 @Composable
 fun StatusHeroCard(
     powerStatus: PowerStatus,
-    selectedQueue: SavedQueue?,
+    queueCode: String,
     isLoading: Boolean,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
@@ -142,7 +141,7 @@ fun StatusHeroCard(
 
                     // Cherga badge
                     Text(
-                        text = "Черга ${selectedQueue?.displayQueueCode ?: "4.2"}",
+                        text = "Черга $queueCode",
                         color = ElectricYellow,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
@@ -275,13 +274,13 @@ fun StatusHeroCard(
                         onClick = {
                             val statusText = when (powerStatus) {
                                 is PowerStatus.NoPower ->
-                                    "⚡ У мене (${selectedQueue?.name ?: "Черга ${selectedQueue?.displayQueueCode}"}) зараз НЕМАЄ світла. Орієнтовно увімкнуть о ${powerStatus.currentInterval.endStr} (залишилось ~${powerStatus.humanReadableRemaining})."
+                                    "⚡ У мене (Черга $queueCode) зараз НЕМАЄ світла. Орієнтовно увімкнуть о ${powerStatus.currentInterval.endStr} (залишилось ~${powerStatus.humanReadableRemaining})."
                                 is PowerStatus.HasPowerUpcomingOutage ->
-                                    "💡 У мене (${selectedQueue?.name ?: "Черга ${selectedQueue?.displayQueueCode}"}) зараз СВІТЛО Є! Наступне відключення о ${powerStatus.nextInterval.startStr} (через ~${powerStatus.humanReadableRemaining})."
+                                    "💡 У мене (Черга $queueCode) зараз СВІТЛО Є! Наступне відключення о ${powerStatus.nextInterval.startStr} (через ~${powerStatus.humanReadableRemaining})."
                                 is PowerStatus.AllOutagesFinished ->
-                                    "🎉 У мене (${selectedQueue?.name ?: "Черга ${selectedQueue?.displayQueueCode}"}) всі відключення на сьогодні вже закінчилися! Світло є."
+                                    "🎉 У мене (Черга $queueCode) всі відключення на сьогодні вже закінчилися! Світло є."
                                 is PowerStatus.NoOutagesToday ->
-                                    "☀️ У мене (${selectedQueue?.name ?: "Черга ${selectedQueue?.displayQueueCode}"}) світло є весь день без відключень!"
+                                    "☀️ У мене (Черга $queueCode) світло є весь день без відключень!"
                             }
                             val sendIntent = Intent().apply {
                                 action = Intent.ACTION_SEND

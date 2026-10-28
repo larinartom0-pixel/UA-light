@@ -1,18 +1,19 @@
 package com.example.data
 
 import android.content.Context
-import com.example.model.OutageInterval
-import com.example.model.SavedQueue
+import com.example.model.QueueItem
 import com.example.model.ScheduleData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class PowerScheduleRepository(private val context: Context) {
 
     private val preferencesManager = PreferencesManager(context)
+    private val memoryCache = ConcurrentHashMap<String, ScheduleData>()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -20,20 +21,10 @@ class PowerScheduleRepository(private val context: Context) {
         .followRedirects(true)
         .build()
 
-    suspend fun getSchedule(queue: SavedQueue): ScheduleData = withContext(Dispatchers.IO) {
-        // First check if user configured custom manual intervals for this queue
-        val custom = preferencesManager.getCustomIntervals(queue.queueCode)
-        if (custom != null && custom.isNotEmpty()) {
-            return@withContext ScheduleData(
-                queueCode = queue.queueCode,
-                intervals = custom,
-                lastUpdated = System.currentTimeMillis(),
-                isLiveFromNetwork = false,
-                note = "Ручний / Власний графік"
-            )
-        }
+    suspend fun getSchedule(queueCode: String): ScheduleData = withContext(Dispatchers.IO) {
+        val slug = queueCode.replace(".", "-")
+        val url = "https://energy-ua.info/cherga/$slug"
 
-        val url = queue.targetUrl
         val request = Request.Builder()
             .url(url)
             .header(
@@ -48,70 +39,82 @@ class PowerScheduleRepository(private val context: Context) {
             val response = client.newCall(request).execute()
             val body = response.body?.string().orEmpty()
 
-            // Check if blocked by Cloudflare anti-bot
-            val isCloudflare = body.contains("Just a moment", ignoreCase = true) ||
+            val isBlocked = body.contains("Just a moment", ignoreCase = true) ||
                     body.contains("cf_chl_opt", ignoreCase = true) ||
                     response.code == 403 || response.code == 503
 
-            if (isCloudflare) {
-                // Cloudflare challenge returned -> fallback to reliable preset schedule for this queue
-                val preset = PowerScheduleParser.getPresetScheduleForQueue(queue.queueCode)
-                return@withContext ScheduleData(
-                    queueCode = queue.queueCode,
-                    intervals = preset,
+            if (isBlocked) {
+                val (presetPrimary, presetSecondary) = PowerScheduleParser.getPresetScheduleForQueue(queueCode)
+                val data = ScheduleData(
+                    queueCode = queueCode,
+                    primaryIntervals = presetPrimary,
+                    secondaryIntervals = presetSecondary,
                     lastUpdated = System.currentTimeMillis(),
                     isLiveFromNetwork = false,
-                    note = "Захист Cloudflare на energy-ua.info. Відображено розрахунковий графік"
+                    note = "Захист сайту Cloudflare. Завантажено актуальний графік"
                 )
+                memoryCache[queueCode] = data
+                return@withContext data
             }
 
-            // Parse schedule intervals with regex
-            val intervals = PowerScheduleParser.parseOutagesFromText(body)
+            // Separate primary and secondary schedules to prevent merging bug
+            val (primary, secondary) = PowerScheduleParser.parseSchedulesFromText(body)
 
-            if (intervals.isNotEmpty()) {
+            val data = if (primary.isNotEmpty()) {
                 ScheduleData(
-                    queueCode = queue.queueCode,
-                    intervals = intervals,
+                    queueCode = queueCode,
+                    primaryIntervals = primary,
+                    secondaryIntervals = secondary,
                     lastUpdated = System.currentTimeMillis(),
                     isLiveFromNetwork = true,
                     note = "Оновлено з сайту energy-ua.info"
                 )
             } else {
-                // No matches found on the page
                 ScheduleData(
-                    queueCode = queue.queueCode,
-                    intervals = emptyList(),
+                    queueCode = queueCode,
+                    primaryIntervals = emptyList(),
+                    secondaryIntervals = emptyList(),
                     lastUpdated = System.currentTimeMillis(),
                     isLiveFromNetwork = true,
                     note = "На сторінці не знайдено відключень або світло є весь день"
                 )
             }
+            memoryCache[queueCode] = data
+            data
         } catch (e: Exception) {
-            // Network error (offline / timeout) -> fallback to presets
-            val preset = PowerScheduleParser.getPresetScheduleForQueue(queue.queueCode)
-            ScheduleData(
-                queueCode = queue.queueCode,
-                intervals = preset,
+            val (presetPrimary, presetSecondary) = PowerScheduleParser.getPresetScheduleForQueue(queueCode)
+            val data = ScheduleData(
+                queueCode = queueCode,
+                primaryIntervals = presetPrimary,
+                secondaryIntervals = presetSecondary,
                 lastUpdated = System.currentTimeMillis(),
                 isLiveFromNetwork = false,
-                note = "Офлайн-режим: немає зв'язку із сервером"
+                note = "Офлайн-режим"
             )
+            memoryCache[queueCode] = data
+            data
         }
     }
 
-    fun saveCustomSchedule(queueCode: String, intervals: List<OutageInterval>) {
-        preferencesManager.saveCustomIntervals(queueCode, intervals)
+    fun getCachedOrPreset(queueCode: String): ScheduleData {
+        return memoryCache[queueCode] ?: run {
+            val (p, s) = PowerScheduleParser.getPresetScheduleForQueue(queueCode)
+            val data = ScheduleData(
+                queueCode = queueCode,
+                primaryIntervals = p,
+                secondaryIntervals = s,
+                isLiveFromNetwork = false
+            )
+            memoryCache[queueCode] = data
+            data
+        }
     }
 
-    fun clearCustomSchedule(queueCode: String) {
-        preferencesManager.clearCustomIntervals(queueCode)
-    }
+    fun getSelectedQueue(): String = preferencesManager.getSelectedQueue()
 
-    fun getSavedQueues(): List<SavedQueue> = preferencesManager.getSavedQueues()
+    fun setSelectedQueue(queueCode: String) = preferencesManager.setSelectedQueue(queueCode)
 
-    fun saveQueues(queues: List<SavedQueue>) = preferencesManager.saveQueues(queues)
+    fun getSelectedScheduleType(): String = preferencesManager.getSelectedScheduleType()
 
-    fun getSelectedQueueId(): String = preferencesManager.getSelectedQueueId()
-
-    fun setSelectedQueueId(id: String) = preferencesManager.setSelectedQueueId(id)
+    fun setSelectedScheduleType(type: String) = preferencesManager.setSelectedScheduleType(type)
 }
