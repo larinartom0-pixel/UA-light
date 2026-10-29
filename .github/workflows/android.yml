@@ -26,11 +26,95 @@ jobs:
       - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
+      - name: Prepare Signing Keystore
+        env:
+          CUSTOM_SIGNING_KEY: ${{ secrets.SIGNING_KEY || secrets.KEYSTORE_BASE64 || secrets.KEYSTORE }}
+          INPUT_STORE_PASS: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD }}
+          INPUT_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
+
+          # 1. If my-upload-key.jks does not exist on runner, restore permanent key
+          if [ ! -f "$KEYSTORE_FILE" ]; then
+            echo "Creating permanent production keystore..."
+            python3 -c "
+          import base64
+          b64 = '''
+          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
+          '''
+          with open('$KEYSTORE_FILE', 'wb') as f:
+              f.write(base64.b64decode(b64.strip()))
+          "
+          fi
+
+          # 2. Determine working password (verify with keytool)
+          STORE_PASS="svitlo2026pass"
+          if [ -n "$INPUT_STORE_PASS" ] && keytool -list -keystore "$KEYSTORE_FILE" -storepass "$INPUT_STORE_PASS" >/dev/null 2>&1; then
+            STORE_PASS="$INPUT_STORE_PASS"
+          fi
+
+          KEY_PASS="$STORE_PASS"
+          if [ -n "$INPUT_KEY_PASS" ]; then
+            KEY_PASS="$INPUT_KEY_PASS"
+          fi
+
+          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> $GITHUB_ENV
+          echo "STORE_PASSWORD=$STORE_PASS" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PASS" >> $GITHUB_ENV
+          echo "Keystore ready: $KEYSTORE_FILE (alias: upload)"
+
       - name: Build Signed Release APK
         env:
-          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
-          STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          STORE_PASSWORD: ${{ env.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease -x test --no-daemon --stacktrace
           cp app/build/outputs/apk/release/*.apk ./Svitlo-Release.apk
