@@ -26,39 +26,11 @@ jobs:
       - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Setup Permanent Keystore
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY || secrets.KEYSTORE_BASE64 || secrets.KEYSTORE }}
-          KEY_STORE_PASS: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
-          KEY_PASS: ${{ secrets.KEY_PASSWORD || secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
-          USER_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: |
-          KEYSTORE_FILE="${GITHUB_WORKSPACE}/my-upload-key.jks"
-          rm -f "$KEYSTORE_FILE"
-
-          # Permanent production keystore encoded in base64 (2048-bit RSA, valid until 2054)
-          PERMANENT_KEYSTORE="MIIKlAIBAzCCCj4GCSqGSIb3DQEHAaCCCi8EggorMIIKJzCCBa4GCSqGSIb3DQEHAaCCBZ8EggWbMIIFlzCCBZMGCyqGSIb3DQEMCgECoIIFQDCCBTwwZgYJKoZIhvcNAQUNMFkwOAYJKoZIhvcNAQUMMCsEFJNCeNTRdYPdxyaznbjbtOQo9qneAgInEAIBIDAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQSe8SjzF0PXn/EkZrHNNhuQSCBNC690RIa4IqkrwPoPrvWqlBdEL9haFv+SLFrcV/bcgyoe2zidgDW8c5erWrvXaIf7ISuQ7bYNm+WTM9ScD/IkVckzqxzdgdYm/ppdcGHa3QfIa79e8E37zirNXd504yZGm5OQJ+PCXrLjLgk30MPNq/au1gi6OIW5voY+tnlfVz3EZuHz+7uwR6sKLgQmCRgzCv3SgRubMpf77F6mZZbNIUY3Z3wqE9eNI2e/UGQPYfd7mwXPj/xXvi+SuyPApjetKwOb2VIHvzZJ9j5SqdaoRPB37XBUmF1kGWMq8EiQ4LysCtlJX/kzRh/kqAOZCU0LcmnILfWpOkh52E5FNxZ79L1daqy3pqsX8zMCizUu0HUwtOUwsko3s4IjSAm91sKNGQFIOkgsol45BFwcZnsBxCOVD8kFYgRqmrs0VJ9eqMMqC9ZTPFpzQnr2TaMFqKldYc11sCHSv7L+kpzIF0bShvf0hZ9Z91LnwSxqqp+QSC8uZGtemmReiQLMiXk5+ELf4CStVpX5/KEE7YqSyl+7u0tWERnjKlOSXhXzH2pWBk77QUCinwpR3aFjPKey9CrIQuqJyCpPO243LqPKzxj6deZK+GdGJ3NbbXaWweQiOh16Zl0eNqAs9DO1us5HRGSYIhquZnKPjdBEUbBof/Bj6I0TzC3HlJzf/FbCiJVxxfwrPPIwdN0VO2lCNKDUny2PzTwxo3Bchf02pq186VeQe9ek6RErIFEbXWYAWl8Rkl1g5uwL0JR85NTEUNdHU9HNHrNRUpVEgROQ9poaY3kbNvvhPwHfxAuPxfKUxUwI0PG1tqHwW3yqSIChwFE8qKhUT2idt2da7xt8OIYNZo/yh7A+D4OqWRSbTK3Qj58bNdZivG5BXAX3CCNbOzxMHgM5KwnrjHrvbw2Z3S9GWs7k1Tz982MmtKq09OS82ytBuX0Zrm64KYsW9jEDyIb42acGJgXppxcyY46O7iQ8/EbwMg3z1ATEVcKLFRA/sQqOGdVWIAsAIN4hJHUOxEWAkMMH5JLB+Vl9FORJKlXs6KkzlC6ICmfh9LxN3Bi4aJajIwdwNQebZRFgi6YE2dZ3AYCJXyRxXNyB0N+bvCJgdJJRkeECVYyFoelSrujotFLbNF4F9Et9Lbrz7WywE3Vbpwu0wOzYbqH4DS4uwAYqSF+LzHo1FqAyFf+7nf6DOSig1OB07UtO8+RuQOwpWociOkCMlgjUcMjTmdq23TbhgU0gV+vgQrnRh9lMmtUJKO+Lc+1TKT7yemhgPkzaYpvfmF0mUGp6NYPrIwsHBAms6DYzA7p2AB3DJXm2xHqz+a4dIT2CNqNGw1Kcy27m44Ud+JeqL0+GAtVUu0iDCpvsw+gSnuEbj0wNsw174c78zKKrO3n3nlg/1VHFafys6gc+DKjwyhfvTIhzzK15wOd2wGHWhskiygawYDdSQld+45F+TrWcjJX8ZJ77wIwmtOGpQxZYyGDPXiKDA6XkjwECsscVLmUt/BAw/ye/FKE4DTNAhZeZ1hAis2JRBYOnWmPF7R3df9O3KlFoeW7cF4aqg2R9Uu6RwPVuqAYs99dwc130PNVPbhez9M+UvsjT9TbaM+ZtHs1kiMIhUR4pCq2KuYJ25tApKXwZO4tUJW3qa4opezaTFAMBsGCSqGSIb3DQEJFDEOHgwAdQBwAGwAbwBhAGQwIQYJKoZIhvcNAQkVMRQEElRpbWUgMTc5MzI4MDEwODQxOTCCBHEGCSqGSIb3DQEHBqCCBGIwggReAgEAMIIEVwYJKoZIhvcNAQcBMGYGCSqGSIb3DQEFDTBZMDgGCSqGSIb3DQEFDDArBBRR6fSVksdawRc/dZYHAhWsiMaf8wICJxACASAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEEPfRjz2F6tjeHh/v4ow3RiqAggPgBahq0Wy6uh7qh1HGZ6p3CRZPjjyHv5i5QRMVTYdCAov4gcAypwxW2BLjpKyOU1VfIDc58X9TZQdbmZApbxe37GmdsZtyaEUR3pGNz1edHqRN1QLzMzxyafo312yP/11eKnucZQ3WZ5606TKolmWFJRN6OGjGwxNTsCfKocMU/HEauDLEp5G70gGPWmLXIO4Ql24AebEZNrdPxkHF9cUnik7q+1T4LE3Pyz6ssST/u+t6HS6Y3JLlIyO46HH+mZyXE/l3YD9WgveU/Czl33SvMpMJ8vMGkLBXeoWklSpdnboFti7lFWTl+RmwWUxv1I/VkMCUaKz7mpiKTcM80kCo5A5BL6da2E+vBgbIOoXeZp6/jv6aMqL5OZ3QRmuz3dSmoLdPp55b5WGrGOA4PgxW0Cz/lRBGJnLi32tHm7tmhVAtiVvNG3J2Y639cTblGlAaCGBV0M+gx4ExDk46TFwGQJhf0ZoGawqFqoNE0XKlVU8YBYSyJZOJeHIk0Sc4V3OR17wwM4SSd4Y+Ud0o99GSRMH9N2CmzTnjXO7wGk7T3p1IHS8ih/HX8I7E9DzGaZUAtRhxdaaInPRJBZpYA/JeUhHh0KHt9Exp/of1srg+bG22S8TsGxvLxF2BsnIO9YecW9n0eq5cmFMearet356tKop1A/4+L4MGvb9EvMUG/zPQZk4i/SyozojxUIZXNBBTd10u7pq0pIDk5tV4qFlKcy7/vTTW6XV6GedFDcBy4ng9v/ogyHrT+ctSnGU9/yn9Egb/cLlwOXtdI4jaMC0F08v8K7/8gEIECs75ebfriuRDeQNC8MfaGxohqHUazZrakUfkH6MJW9LRyKVYeJqIvrewYDeSLbuP0LL018Uy1LFICeQOz7FIxorwARQd16+Wt3LvMozEjhLp1zPv6OhOLajCD/d7t3uFCpMoYMfmkOuvjJXL1onqJe32LIKi1yyUyo89aZVW9iq0RBbvw2IH2O1+qAzKHQi/Blna4BlR/xYyEiOVKbCzzyN5822TwWKw81LEvFQAJUPrvlgpbLsvQTBYjzQmZ/VrE5kZR3wkLgazQirBrXbIdp+0GDMXFPa0MvRufrp0S7jQKIi5sbhBjkequ9rlAeaV0B23c4LvZrlIeNqivUcBiEJCb45oU0yt5KpMYfa5Yd/szNNgmrY/2lUDvVWCOkoOIoDs4gnj3Fo7tTK6V1pFGbYQ40PnagtcKFDsQBugSLRl/T5BDP6AG6xGU4mYlqUQdWkluoI8puBOLZ+WKt1MqMkevdPGN5IqNFYmxAZf8FfebCsMJN0m/oHijYOXWt4k2XCOi5pPz+MwTTAxMA0GCWCGSAFlAwQCAQUABCD3LBQp2NoTFc3zpVmebRvLrVG5FxcCQPkX3LWGx82UTQQUtOIcmwytn9Lu+IP8Ztpgld6HixYCAicQ"
-
-          # Prefer secret if provided and valid, otherwise use permanent keystore
-          KEY_DATA="${SIGNING_KEY:-$PERMANENT_KEYSTORE}"
-          echo "$KEY_DATA" | tr -d '\r\n ' | base64 -d > "$KEYSTORE_FILE"
-
-          if ! keytool -list -keystore "$KEYSTORE_FILE" -storepass "$KEY_STORE_PASS" >/dev/null 2>&1; then
-            echo "Provided secret failed verification, decoding permanent key..."
-            echo "$PERMANENT_KEYSTORE" | tr -d '\r\n ' | base64 -d > "$KEYSTORE_FILE"
-            KEY_STORE_PASS="svitlo2026pass"
-            KEY_PASS="svitlo2026pass"
-          fi
-
-          echo "KEYSTORE_PATH=$KEYSTORE_FILE" >> $GITHUB_ENV
-          echo "STORE_PASSWORD=$KEY_STORE_PASS" >> $GITHUB_ENV
-          echo "KEY_PASSWORD=$KEY_PASS" >> $GITHUB_ENV
-
       - name: Build Signed Release APK
         env:
-          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
-          STORE_PASSWORD: ${{ env.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEY_STORE_PASSWORD || secrets.STORE_PASSWORD || 'svitlo2026pass' }}
         run: |
           ./gradlew assembleRelease -x test --no-daemon --stacktrace
           cp app/build/outputs/apk/release/*.apk ./Svitlo-Release.apk

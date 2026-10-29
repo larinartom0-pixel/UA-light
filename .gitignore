@@ -16,9 +16,6 @@
 local.properties
 .env
 debug.keystore
-*.jks
-*.keystore
-my-upload-key.jks
 
 # Ignore uploaded assets and public folder
 /public/
