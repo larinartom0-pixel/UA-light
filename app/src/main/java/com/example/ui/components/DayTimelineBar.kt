@@ -43,6 +43,7 @@ import com.example.ui.theme.PowerGreen
 fun DayTimelineBar(
     intervals: List<OutageInterval>,
     currentMinuteOfDay: Int,
+    isToday: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -70,29 +71,42 @@ fun DayTimelineBar(
                     color = Color.White
                 )
 
-                // Current time tag
-                val curH = currentMinuteOfDay / 60
-                val curM = currentMinuteOfDay % 60
-                val formattedTime = String.format("%02d:%02d", curH, curM)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(ElectricBlue.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Box(
+                // Current time tag (only for Today)
+                if (isToday) {
+                    val curH = currentMinuteOfDay / 60
+                    val curM = currentMinuteOfDay % 60
+                    val formattedTime = String.format("%02d:%02d", curH, curM)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(ElectricBlue)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ElectricBlue.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(ElectricBlue)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Зараз $formattedTime",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ElectricBlue
+                        )
+                    }
+                } else {
                     Text(
-                        text = "Зараз $formattedTime",
+                        text = "Завтра",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = ElectricBlue
+                        color = ElectricYellow,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ElectricYellow.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -144,35 +158,37 @@ fun DayTimelineBar(
                         )
                     }
 
-                    // 4. Current Time Needle / Marker
-                    val currentFraction = (currentMinuteOfDay.toFloat() / totalMinutes).coerceIn(0f, 1f)
-                    val needleX = currentFraction * w
+                    // 4. Current Time Needle / Marker (only for Today)
+                    if (isToday) {
+                        val currentFraction = (currentMinuteOfDay.toFloat() / totalMinutes).coerceIn(0f, 1f)
+                        val needleX = currentFraction * w
 
-                    // Vertical line
-                    drawLine(
-                        color = ElectricBlue,
-                        start = Offset(needleX, 0f),
-                        end = Offset(needleX, h),
-                        strokeWidth = 3.dp.toPx()
-                    )
+                        // Vertical line
+                        drawLine(
+                            color = ElectricBlue,
+                            start = Offset(needleX, 0f),
+                            end = Offset(needleX, h),
+                            strokeWidth = 3.dp.toPx()
+                        )
 
-                    // Top indicator triangle
-                    val path = Path().apply {
-                        moveTo(needleX - 5.dp.toPx(), 0f)
-                        lineTo(needleX + 5.dp.toPx(), 0f)
-                        lineTo(needleX, 7.dp.toPx())
-                        close()
+                        // Top indicator triangle
+                        val path = Path().apply {
+                            moveTo(needleX - 5.dp.toPx(), 0f)
+                            lineTo(needleX + 5.dp.toPx(), 0f)
+                            lineTo(needleX, 7.dp.toPx())
+                            close()
+                        }
+                        drawPath(path = path, color = ElectricBlue)
+
+                        // Bottom indicator triangle
+                        val bottomPath = Path().apply {
+                            moveTo(needleX - 5.dp.toPx(), h)
+                            lineTo(needleX + 5.dp.toPx(), h)
+                            lineTo(needleX, h - 7.dp.toPx())
+                            close()
+                        }
+                        drawPath(path = bottomPath, color = ElectricBlue)
                     }
-                    drawPath(path = path, color = ElectricBlue)
-
-                    // Bottom indicator triangle
-                    val bottomPath = Path().apply {
-                        moveTo(needleX - 5.dp.toPx(), h)
-                        lineTo(needleX + 5.dp.toPx(), h)
-                        lineTo(needleX, h - 7.dp.toPx())
-                        close()
-                    }
-                    drawPath(path = bottomPath, color = ElectricBlue)
                 }
             }
 

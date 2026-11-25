@@ -8,7 +8,9 @@ import com.example.model.OutageInterval
 import com.example.model.PowerStatus
 import com.example.model.QueueItem
 import com.example.model.ScheduleData
+import com.example.model.ScheduleDay
 import com.example.model.ScheduleType
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +22,7 @@ import java.util.Calendar
 data class MainUiState(
     val allQueues: List<QueueItem> = emptyList(),
     val selectedQueueCode: String = "4.2",
+    val selectedDay: ScheduleDay = ScheduleDay.TODAY,
     val selectedScheduleType: ScheduleType = ScheduleType.PRIMARY,
     val scheduleData: ScheduleData? = null,
     val activeIntervals: List<OutageInterval> = emptyList(),
@@ -31,6 +34,8 @@ data class MainUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = PowerScheduleRepository(application.applicationContext)
+    private var fetchJob: Job? = null
+    private var prefetchJob: Job? = null
 
     private val _uiState = MutableStateFlow(
         MainUiState(
@@ -38,7 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedQueueCode = repository.getSelectedQueue(),
             selectedScheduleType = try {
                 ScheduleType.valueOf(repository.getSelectedScheduleType())
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 ScheduleType.PRIMARY
             }
         )
@@ -46,20 +51,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     init {
-        loadCurrentQueue()
+        val initialCode = _uiState.value.selectedQueueCode
+        repository.getCached(initialCode)?.let { cached ->
+            _uiState.value = _uiState.value.copy(scheduleData = cached)
+        }
+        fetchSchedule(initialCode, forceAllRefresh = true)
         startLiveTimer()
-    }
-
-    private fun loadCurrentQueue() {
-        val currentCode = _uiState.value.selectedQueueCode
-        fetchSchedule(currentCode)
     }
 
     fun selectQueue(queueCode: String) {
         if (_uiState.value.selectedQueueCode == queueCode) return
         repository.setSelectedQueue(queueCode)
-        _uiState.value = _uiState.value.copy(selectedQueueCode = queueCode)
-        fetchSchedule(queueCode)
+        val cached = repository.getCached(queueCode)
+        _uiState.value = _uiState.value.copy(
+            selectedQueueCode = queueCode,
+            selectedDay = ScheduleDay.TODAY,
+            scheduleData = cached
+        )
+        updateActiveIntervalsAndStatus()
+
+        if (!repository.isFreshInMemory(queueCode)) {
+            fetchSchedule(queueCode, forceAllRefresh = false)
+        }
+    }
+
+    fun setScheduleDay(day: ScheduleDay) {
+        _uiState.value = _uiState.value.copy(selectedDay = day)
+        updateActiveIntervalsAndStatus()
     }
 
     fun setScheduleType(type: ScheduleType) {
@@ -69,21 +87,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
-        fetchSchedule(_uiState.value.selectedQueueCode)
+        fetchSchedule(_uiState.value.selectedQueueCode, forceAllRefresh = true)
     }
 
-    private fun fetchSchedule(queueCode: String) {
-        viewModelScope.launch {
+    private fun fetchSchedule(queueCode: String, forceAllRefresh: Boolean) {
+        fetchJob?.cancel()
+        fetchJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
                 val data = repository.getSchedule(queueCode)
-                _uiState.value = _uiState.value.copy(
-                    scheduleData = data,
-                    isLoading = false
-                )
-                updateActiveIntervalsAndStatus()
-            } catch (e: Exception) {
+                if (_uiState.value.selectedQueueCode == queueCode) {
+                    val safeDay = if (_uiState.value.selectedDay == ScheduleDay.TOMORROW && !data.hasTomorrow) {
+                        ScheduleDay.TODAY
+                    } else {
+                        _uiState.value.selectedDay
+                    }
+                    _uiState.value = _uiState.value.copy(
+                        scheduleData = data,
+                        selectedDay = safeDay,
+                        isLoading = false
+                    )
+                    updateActiveIntervalsAndStatus()
+                }
+            } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(isLoading = false)
+            }
+
+            if (forceAllRefresh) {
+                prefetchOtherQueues(excludeCode = queueCode, force = true)
+            }
+        }
+    }
+
+    private fun prefetchOtherQueues(excludeCode: String, force: Boolean) {
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch {
+            val targets = QueueItem.ALL_QUEUE_CODES.filter { it != excludeCode }
+            for (code in targets) {
+                if (!isActive) break
+                if (force || !repository.isFreshInMemory(code)) {
+                    delay(450L)
+                    try {
+                        val res = repository.getSchedule(code, allowWebViewFallback = false)
+                        updateActiveIntervalsAndStatus()
+                        if (!res.isLiveFromNetwork) {
+                            break
+                        }
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
             }
         }
     }
@@ -105,25 +158,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentMinuteOfDay = nowHours * 60 + nowMins
 
         val data = _uiState.value.scheduleData
+        val activeDay = _uiState.value.selectedDay
         val activeType = _uiState.value.selectedScheduleType
-        val intervals = data?.getIntervals(activeType) ?: emptyList()
 
-        // Recalculate status of ALL 12 queues so chips can show RED if power is off right now
+        val displayedIntervals = data?.getIntervals(activeDay, activeType) ?: emptyList()
+        val todayIntervalsForStatus = data?.getIntervals(ScheduleDay.TODAY, activeType) ?: emptyList()
+
+        // Recalculate status of ALL 12 queues so chips show RED if power is off right now
         val updatedQueues = QueueItem.ALL_QUEUE_CODES.map { code ->
             val queueSchedule = if (code == data?.queueCode) {
                 data.primaryIntervals
             } else {
-                repository.getCachedOrPreset(code).primaryIntervals
+                repository.getCached(code)?.primaryIntervals ?: emptyList()
             }
             val isOffNow = queueSchedule.any { it.isActive(currentMinuteOfDay) }
             QueueItem(code = code, isPowerOffNow = isOffNow)
         }
 
-        val status = calculatePowerStatus(intervals, currentMinuteOfDay, nowSecs)
+        val status = calculatePowerStatus(todayIntervalsForStatus, currentMinuteOfDay, nowSecs)
 
         _uiState.value = _uiState.value.copy(
             allQueues = updatedQueues,
-            activeIntervals = intervals,
+            activeIntervals = displayedIntervals,
             powerStatus = status,
             currentDayMinute = currentMinuteOfDay
         )

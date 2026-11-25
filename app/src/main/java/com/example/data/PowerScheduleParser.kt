@@ -1,8 +1,50 @@
 package com.example.data
 
 import com.example.model.OutageInterval
+import com.example.model.ScheduleData
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+
+data class EnergyUaPayload(
+    val today: List<EnergyUaSlot> = emptyList(),
+    val tomorrow: List<EnergyUaSlot> = emptyList(),
+    val tomorrowAvailable: Boolean = false,
+    val currentTime: Long = 0L,
+    val dates: EnergyUaDates? = null,
+    val nextEventTimestamp: Long = 0L,
+    val isCurrentlyOff: Boolean = false,
+    val isEmergency: Boolean = false
+)
+
+data class EnergyUaSlot(
+    val from: Int = 0,
+    val to: Int = 0,
+    val status: String = ""
+)
+
+data class EnergyUaDates(
+    val today: String = "",
+    val tomorrow: String = ""
+)
 
 object PowerScheduleParser {
+
+    private val moshi: Moshi = Moshi.Builder()
+        .addLast(KotlinJsonAdapterFactory())
+        .build()
+
+    private val payloadAdapter = moshi.adapter(EnergyUaPayload::class.java)
+    private val scheduleDataAdapter = moshi.adapter(ScheduleData::class.java)
+
+    private val PAYLOAD_SCRIPT_REGEX = Regex(
+        """<script\b[^>]*\bid\s*=\s*["']schedulePayload["'][^>]*>([\s\S]*?)</script>""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val ANY_SCRIPT_REGEX = Regex(
+        """<script\b[^>]*>([\s\S]*?)</script>""",
+        RegexOption.IGNORE_CASE
+    )
 
     private val INTERVAL_REGEX = Regex(
         """(\d{1,2}:\d{2})\s*(?:-|—|–|до)\s*(\d{1,2}:\d{2})""",
@@ -10,11 +52,190 @@ object PowerScheduleParser {
     )
 
     /**
-     * Parses raw text or HTML and separates into (PrimarySchedule, SecondarySchedule)
+     * Parses HTML from energy-ua.info/cherga/<slug>.
+     * Prioritizes the new <script id="schedulePayload"> JSON structure,
+     * falling back to regex text extraction if legacy HTML is encountered.
+     */
+    fun parseHtml(queueCode: String, html: String): ScheduleData? {
+        val payloadJson = extractSchedulePayloadJson(html)
+        if (payloadJson != null) {
+            parsePayloadJson(queueCode, payloadJson)?.let { return it }
+        }
+
+        // Fallback to legacy text-based parsing if schedulePayload is absent
+        val (primary, secondary) = parseSchedulesFromText(html)
+        if (primary.isNotEmpty() || secondary.isNotEmpty()) {
+            return ScheduleData(
+                queueCode = queueCode,
+                primaryIntervals = primary,
+                secondaryIntervals = secondary,
+                lastUpdated = System.currentTimeMillis(),
+                isLiveFromNetwork = true,
+                note = "Оновлено з energy-ua.info"
+            )
+        }
+
+        return null
+    }
+
+    fun parsePayloadJson(queueCode: String, payloadJson: String): ScheduleData? {
+        val payload = try {
+            payloadAdapter.fromJson(payloadJson)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        val (todayPrimary, todaySecondary) = resolveSlots(payload.today)
+        val (tomorrowPrimary, tomorrowSecondary) = if (payload.tomorrowAvailable || payload.tomorrow.isNotEmpty()) {
+            resolveSlots(payload.tomorrow)
+        } else {
+            Pair(emptyList(), emptyList())
+        }
+
+        val statusNote = when {
+            payload.isEmergency -> "⚠️ Екстрені відключення (energy-ua.info)"
+            todayPrimary.isEmpty() && todaySecondary.isEmpty() -> "Світло є весь день (energy-ua.info)"
+            else -> "Оновлено з energy-ua.info"
+        }
+
+        return ScheduleData(
+            queueCode = queueCode,
+            primaryIntervals = todayPrimary,
+            secondaryIntervals = todaySecondary,
+            tomorrowPrimaryIntervals = tomorrowPrimary,
+            tomorrowSecondaryIntervals = tomorrowSecondary,
+            todayDate = payload.dates?.today.orEmpty(),
+            tomorrowDate = payload.dates?.tomorrow.orEmpty(),
+            tomorrowAvailable = payload.tomorrowAvailable || tomorrowPrimary.isNotEmpty(),
+            isEmergency = payload.isEmergency,
+            lastUpdated = System.currentTimeMillis(),
+            isLiveFromNetwork = true,
+            note = statusNote
+        )
+    }
+
+    fun extractSchedulePayloadJson(html: String): String? {
+        val directMatch = PAYLOAD_SCRIPT_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim()
+        if (!directMatch.isNullOrEmpty() && directMatch.startsWith("{")) {
+            return directMatch
+        }
+
+        // Secondary scan: look for inline JSON script containing "today" and "dates"
+        for (match in ANY_SCRIPT_REGEX.findAll(html)) {
+            val content = match.groupValues.getOrNull(1)?.trim() ?: continue
+            if (content.startsWith("{") && content.contains("\"today\"") && content.contains("\"dates\"")) {
+                return content
+            }
+        }
+        return null
+    }
+
+    /**
+     * Replicates schedule-live.js segment resolution:
+     * Priority: red > yellow > green.
+     * Returns Pair(guaranteedRedIntervals, combinedRedAndYellowIntervalsIfYellowExists).
+     */
+    fun resolveSlots(slots: List<EnergyUaSlot>): Pair<List<OutageInterval>, List<OutageInterval>> {
+        if (slots.isEmpty()) return Pair(emptyList(), emptyList())
+
+        val points = sortedSetOf(0, 1440)
+        for (slot in slots) {
+            points.add(slot.from.coerceIn(0, 1440))
+            points.add(slot.to.coerceIn(0, 1440))
+        }
+
+        val sortedPoints = points.toList()
+        val resolved = mutableListOf<Triple<Int, Int, String>>()
+
+        for (i in 0 until sortedPoints.size - 1) {
+            val start = sortedPoints[i]
+            val end = sortedPoints[i + 1]
+            if (end <= start) continue
+
+            var status = "green"
+            for (slot in slots) {
+                val sFrom = slot.from.coerceIn(0, 1440)
+                val sTo = slot.to.coerceIn(0, 1440)
+                if (sFrom < end && sTo > start) {
+                    val slotStatus = slot.status.lowercase()
+                    if (slotStatus == "red") {
+                        status = "red"
+                        break
+                    }
+                    if (slotStatus == "yellow") {
+                        status = "yellow"
+                    }
+                }
+            }
+
+            val last = resolved.lastOrNull()
+            if (last != null && last.third == status && last.second == start) {
+                resolved[resolved.lastIndex] = Triple(last.first, end, status)
+            } else {
+                resolved.add(Triple(start, end, status))
+            }
+        }
+
+        val redIntervals = resolved
+            .filter { it.third == "red" }
+            .map { minutesToInterval(it.first, it.second) }
+
+        val hasYellow = resolved.any { it.third == "yellow" }
+        val secondaryIntervals = if (hasYellow) {
+            val merged = mutableListOf<Pair<Int, Int>>()
+            for ((start, end, status) in resolved) {
+                if (status == "red" || status == "yellow") {
+                    val last = merged.lastOrNull()
+                    if (last != null && last.second == start) {
+                        merged[merged.lastIndex] = Pair(last.first, end)
+                    } else {
+                        merged.add(Pair(start, end))
+                    }
+                }
+            }
+            merged.map { minutesToInterval(it.first, it.second) }
+        } else {
+            emptyList()
+        }
+
+        return Pair(redIntervals, secondaryIntervals)
+    }
+
+    fun minutesToInterval(startMin: Int, endMin: Int): OutageInterval {
+        val clampedStart = startMin.coerceIn(0, 1439)
+        val clampedEnd = endMin.coerceIn(clampedStart + 1, 1440)
+        return OutageInterval(
+            startMin = clampedStart,
+            endMin = clampedEnd,
+            startStr = minutesToClock(clampedStart),
+            endStr = minutesToClock(clampedEnd)
+        )
+    }
+
+    fun minutesToClock(minutes: Int): String {
+        if (minutes >= 1440) return "24:00"
+        val h = minutes / 60
+        val m = minutes % 60
+        return String.format("%02d:%02d", h, m)
+    }
+
+    fun serializeScheduleData(data: ScheduleData): String {
+        return scheduleDataAdapter.toJson(data)
+    }
+
+    fun deserializeScheduleData(json: String): ScheduleData? {
+        return try {
+            scheduleDataAdapter.fromJson(json)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses raw text or legacy HTML and separates into (PrimarySchedule, SecondarySchedule)
      * preventing overlapping outages from merging into a single corrupted schedule.
      */
     fun parseSchedulesFromText(rawText: String): Pair<List<OutageInterval>, List<OutageInterval>> {
-        // 1. First check if explicit section headers exist (e.g. "запасний", "можливі", "графік 2", "завтра")
         val lower = rawText.lowercase()
         val splitIndex = listOf(
             lower.indexOf("запасн"),
@@ -33,14 +254,10 @@ object PowerScheduleParser {
             }
         }
 
-        // 2. Parse all intervals and partition them if any overlap occurs
         val allIntervals = parseSingleSchedule(rawText)
         return partitionNonOverlapping(allIntervals)
     }
 
-    /**
-     * Parses all intervals from a block of text.
-     */
     fun parseSingleSchedule(text: String): List<OutageInterval> {
         val cleanText = stripHtmlTags(text)
         val matches = INTERVAL_REGEX.findAll(cleanText).toList()
@@ -84,9 +301,6 @@ object PowerScheduleParser {
         return list.distinctBy { "${it.startMin}-${it.endMin}" }
     }
 
-    /**
-     * Splits intervals into primary and secondary lists if overlaps occur.
-     */
     fun partitionNonOverlapping(intervals: List<OutageInterval>): Pair<List<OutageInterval>, List<OutageInterval>> {
         if (intervals.size <= 1) return Pair(intervals, emptyList())
 
@@ -122,115 +336,5 @@ object PowerScheduleParser {
             .replace("&mdash;", "—")
             .replace("&ndash;", "–")
             .replace(Regex("\\s+"), " ")
-    }
-
-    /**
-     * Default realistic fallback schedules for all 12 Ukrainian queues (1.1 - 6.2).
-     */
-    fun getPresetScheduleForQueue(queueCode: String): Pair<List<OutageInterval>, List<OutageInterval>> {
-        val normalized = queueCode.replace("-", ".").trim()
-        val primary = when (normalized) {
-            "4.2" -> listOf(
-                createInterval("06:30", "08:00"),
-                createInterval("12:30", "15:00"),
-                createInterval("18:30", "21:30")
-            )
-            "4.1" -> listOf(
-                createInterval("05:30", "07:30"),
-                createInterval("11:30", "14:00"),
-                createInterval("17:30", "20:30")
-            )
-            "1.1" -> listOf(
-                createInterval("00:00", "03:00"),
-                createInterval("07:00", "10:30"),
-                createInterval("15:00", "18:30"),
-                createInterval("22:30", "24:00")
-            )
-            "1.2" -> listOf(
-                createInterval("01:00", "04:30"),
-                createInterval("08:30", "12:00"),
-                createInterval("16:00", "19:30")
-            )
-            "2.1" -> listOf(
-                createInterval("02:30", "06:00"),
-                createInterval("10:00", "13:30"),
-                createInterval("17:30", "21:00")
-            )
-            "2.2" -> listOf(
-                createInterval("03:30", "07:00"),
-                createInterval("11:00", "14:30"),
-                createInterval("18:30", "22:00")
-            )
-            "3.1" -> listOf(
-                createInterval("04:30", "08:00"),
-                createInterval("12:00", "15:30"),
-                createInterval("19:30", "23:00")
-            )
-            "3.2" -> listOf(
-                createInterval("05:00", "08:30"),
-                createInterval("12:30", "16:00"),
-                createInterval("20:00", "23:30")
-            )
-            "5.1" -> listOf(
-                createInterval("01:30", "05:00"),
-                createInterval("09:00", "12:30"),
-                createInterval("16:30", "20:00")
-            )
-            "5.2" -> listOf(
-                createInterval("02:00", "05:30"),
-                createInterval("09:30", "13:00"),
-                createInterval("17:00", "20:30")
-            )
-            "6.1" -> listOf(
-                createInterval("03:00", "06:30"),
-                createInterval("10:30", "14:00"),
-                createInterval("18:00", "21:30")
-            )
-            "6.2" -> listOf(
-                createInterval("04:00", "07:30"),
-                createInterval("11:30", "15:00"),
-                createInterval("19:00", "22:30")
-            )
-            else -> listOf(
-                createInterval("08:00", "12:00"),
-                createInterval("16:00", "20:00")
-            )
-        }
-
-        val secondary = when (normalized) {
-            "4.2" -> listOf(
-                createInterval("07:30", "09:30"),
-                createInterval("13:30", "16:00"),
-                createInterval("19:30", "21:00")
-            )
-            "4.1" -> listOf(
-                createInterval("06:30", "08:30"),
-                createInterval("12:30", "15:00"),
-                createInterval("18:30", "20:00")
-            )
-            else -> emptyList()
-        }
-
-        return Pair(primary, secondary)
-    }
-
-    fun createInterval(startStr: String, endStr: String): OutageInterval {
-        val sp = startStr.split(":")
-        val ep = endStr.split(":")
-        val sh = sp[0].toInt()
-        val sm = sp[1].toInt()
-        val eh = ep[0].toInt()
-        val em = ep[1].toInt()
-        val sMin = sh * 60 + sm
-        var eMin = eh * 60 + em
-        if (eMin == 0 && (eh == 0 || eh == 24)) {
-            eMin = 1440
-        }
-        return OutageInterval(
-            startMin = sMin,
-            endMin = eMin,
-            startStr = startStr,
-            endStr = endStr
-        )
     }
 }

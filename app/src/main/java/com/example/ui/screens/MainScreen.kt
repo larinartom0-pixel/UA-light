@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.model.ScheduleDay
 import com.example.model.ScheduleType
 import com.example.ui.components.DayTimelineBar
 import com.example.ui.components.OutageIntervalCard
@@ -74,6 +75,7 @@ fun MainScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val isToday = uiState.selectedDay == ScheduleDay.TODAY
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -163,17 +165,80 @@ fun MainScreen(
                     )
                 }
 
+                // Optional Today / Tomorrow selector (shown only when site publishes tomorrow's schedule)
+                val scheduleData = uiState.scheduleData
+                if (scheduleData != null && scheduleData.hasTomorrow) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(DarkNavySurface)
+                                .border(1.dp, DarkNavyBorder, RoundedCornerShape(14.dp))
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val todayLabel = if (scheduleData.todayDate.isNotBlank()) {
+                                "Сьогодні (${scheduleData.todayDate})"
+                            } else {
+                                "Сьогодні"
+                            }
+                            val tomorrowLabel = if (scheduleData.tomorrowDate.isNotBlank()) {
+                                "Завтра (${scheduleData.tomorrowDate})"
+                            } else {
+                                "Завтра"
+                            }
+
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isToday) ElectricBlue else Color.Transparent)
+                                    .clickable { viewModel.setScheduleDay(ScheduleDay.TODAY) }
+                                    .padding(vertical = 10.dp)
+                                    .testTag("today_day_tab")
+                            ) {
+                                Text(
+                                    text = todayLabel,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isToday) Color(0xFF0F172A) else Color.White
+                                )
+                            }
+
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (!isToday) ElectricBlue else Color.Transparent)
+                                    .clickable { viewModel.setScheduleDay(ScheduleDay.TOMORROW) }
+                                    .padding(vertical = 10.dp)
+                                    .testTag("tomorrow_day_tab")
+                            ) {
+                                Text(
+                                    text = tomorrowLabel,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (!isToday) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (!isToday) Color(0xFF0F172A) else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // 2. 24-Hour Timeline Bar
                 item {
                     DayTimelineBar(
                         intervals = uiState.activeIntervals,
-                        currentMinuteOfDay = uiState.currentDayMinute
+                        currentMinuteOfDay = uiState.currentDayMinute,
+                        isToday = isToday
                     )
                 }
 
-                // 3. Schedule Type Switcher (Основний / Запасний графік)
-                val scheduleData = uiState.scheduleData
-                if (scheduleData != null && scheduleData.hasSecondary) {
+                // 3. Schedule Type Switcher (Основний / З можливими відключеннями)
+                if (scheduleData != null && scheduleData.hasSecondaryForDay(uiState.selectedDay)) {
                     item {
                         Row(
                             modifier = Modifier
@@ -214,7 +279,7 @@ fun MainScreen(
                                     .testTag("secondary_schedule_tab")
                             ) {
                                 Text(
-                                    text = "🔄 Запасний графік",
+                                    text = "🔄 З можливими",
                                     fontSize = 13.sp,
                                     fontWeight = if (!isPrimary) FontWeight.Bold else FontWeight.Medium,
                                     color = if (!isPrimary) Color(0xFF1E1E1E) else Color.White
@@ -236,6 +301,7 @@ fun MainScreen(
                         else -> "$totalHours год $totalMins хв"
                     }
 
+                    val dayLabel = if (isToday) "сьогодні" else "завтра"
                     Column {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -243,10 +309,7 @@ fun MainScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (uiState.selectedScheduleType == ScheduleType.SECONDARY)
-                                    "Запасний графік (Черга ${uiState.selectedQueueCode})"
-                                else
-                                    "Основний графік (Черга ${uiState.selectedQueueCode})",
+                                text = "Графік на $dayLabel (Черга ${uiState.selectedQueueCode})",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
@@ -254,7 +317,7 @@ fun MainScreen(
 
                             if (intervals.isNotEmpty()) {
                                 Text(
-                                    text = "${intervals.size} відключення",
+                                    text = "${intervals.size} відкл.",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = ElectricYellow
@@ -273,7 +336,7 @@ fun MainScreen(
                     }
                 }
 
-                // 5. Clean Interval Cards (Separated, no overlapping duplicates)
+                // 5. Interval Cards
                 val intervals = uiState.activeIntervals
                 if (intervals.isEmpty()) {
                     item {
@@ -296,7 +359,7 @@ fun MainScreen(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Світло є весь день!",
+                                    text = if (isToday) "Світло є весь день!" else "На завтра відключень немає!",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White,
@@ -304,7 +367,7 @@ fun MainScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "На сьогодні для цієї черги відключень не заплановано",
+                                    text = "Для цієї черги відключень не заплановано",
                                     fontSize = 12.sp,
                                     color = Color.White.copy(alpha = 0.7f),
                                     textAlign = TextAlign.Center
@@ -316,7 +379,7 @@ fun MainScreen(
                     itemsIndexed(intervals) { index, interval ->
                         OutageIntervalCard(
                             interval = interval,
-                            currentMinuteOfDay = uiState.currentDayMinute,
+                            currentMinuteOfDay = if (isToday) uiState.currentDayMinute else -1,
                             index = index
                         )
                     }
@@ -348,8 +411,9 @@ fun MainScreen(
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
+                                val dateInfo = schedule?.todayDate?.takeIf { it.isNotBlank() }?.let { " • $it" } ?: ""
                                 Text(
-                                    text = "energy-ua.info • Черга ${uiState.selectedQueueCode}",
+                                    text = "energy-ua.info • Черга ${uiState.selectedQueueCode}$dateInfo",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color.White
@@ -357,7 +421,7 @@ fun MainScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Статус: ${schedule?.note ?: "Готово"} (Оновлено: $lastUpdatedFormatted)",
+                                text = "Статус: ${schedule?.note ?: "Оновлення..."} (Оновлено: $lastUpdatedFormatted)",
                                 fontSize = 11.sp,
                                 color = Color.White.copy(alpha = 0.7f)
                             )

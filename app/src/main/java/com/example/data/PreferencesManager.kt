@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.model.ScheduleData
 
 class PreferencesManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("svitlo_prefs", Context.MODE_PRIVATE)
@@ -9,6 +10,7 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val KEY_SELECTED_QUEUE = "selected_queue_code"
         private const val KEY_SCHEDULE_TYPE = "selected_schedule_type"
+        private const val KEY_CACHE_PREFIX = "cached_schedule_"
     }
 
     fun getSelectedQueue(): String {
@@ -25,5 +27,15 @@ class PreferencesManager(context: Context) {
 
     fun setSelectedScheduleType(type: String) {
         prefs.edit().putString(KEY_SCHEDULE_TYPE, type).apply()
+    }
+
+    fun saveCachedSchedule(queueCode: String, data: ScheduleData) {
+        val json = PowerScheduleParser.serializeScheduleData(data)
+        prefs.edit().putString(KEY_CACHE_PREFIX + queueCode, json).apply()
+    }
+
+    fun getCachedSchedule(queueCode: String): ScheduleData? {
+        val json = prefs.getString(KEY_CACHE_PREFIX + queueCode, null) ?: return null
+        return PowerScheduleParser.deserializeScheduleData(json)
     }
 }
